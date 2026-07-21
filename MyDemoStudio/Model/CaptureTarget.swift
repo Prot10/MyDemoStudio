@@ -24,4 +24,15 @@ enum CaptureTarget: Sendable, Equatable, Hashable {
         case .window(let info): return info.displayName
         }
     }
+
+    var isWindow: Bool {
+        if case .window = self { return true }
+        return false
+    }
+
+    /// The captured window's id, so the picker can tick the current selection.
+    var windowID: CGWindowID? {
+        if case .window(let info) = self { return info.id }
+        return nil
+    }
 }
