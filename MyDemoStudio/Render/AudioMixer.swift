@@ -93,7 +93,7 @@ enum AudioMixer {
 
     // MARK: SFX synthesis (subtle & soft)
 
-    private static func makeClick() -> [Float] {
+    static func makeClick() -> [Float] {
         let n = Int(0.045 * sampleRate)
         var out = [Float](repeating: 0, count: n)
         var noise: Float = 0
@@ -110,7 +110,7 @@ enum AudioMixer {
         return out
     }
 
-    private static func makeKey() -> [Float] {
+    static func makeKey() -> [Float] {
         let n = Int(0.028 * sampleRate)
         var out = [Float](repeating: 0, count: n)
         var noise: Float = 0
@@ -126,7 +126,7 @@ enum AudioMixer {
         return out
     }
 
-    private static func mix(_ sample: [Float], into buffer: inout [Float], at frame: Int, gain: Float) {
+    static func mix(_ sample: [Float], into buffer: inout [Float], at frame: Int, gain: Float) {
         guard frame >= 0 else { return }
         for i in 0..<sample.count {
             let idx = frame + i
@@ -137,7 +137,7 @@ enum AudioMixer {
 
     // MARK: Write
 
-    private static func writeWAV(_ samples: [Float]) throws -> URL {
+    static func writeWAV(_ samples: [Float]) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("mds_mix_\(UUID().uuidString).wav")
         // LPCM Int16 WAV: no AAC priming, so it inserts cleanly into an AVMutableComposition
