@@ -12,6 +12,9 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# Node (the optional MCP bridge)
+node_modules/
+
 # Local tooling / environment
 .claude/
 data/
