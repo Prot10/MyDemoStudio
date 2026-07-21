@@ -195,46 +195,14 @@ struct InspectorView: View {
     }
 
     private var exportSection: some View {
-        VStack(spacing: 12) {
-            if model.isExporting {
-                ProgressView(value: model.exportProgress) {
-                    Text("Rendering… \(Int(model.exportProgress * 100))%").font(.caption)
-                }
-            }
-            Menu {
-                ForEach(ExportPreset.allCases) { preset in
-                    Button {
-                        Task { await model.export(preset: preset) }
-                    } label: {
-                        Label(exportLabel(preset), systemImage: preset.isGIF ? "photo.stack" : "film")
-                    }
-                }
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-            } primaryAction: {
-                Task { await model.export(preset: .fullHD) }
-            }
-            .menuStyle(.button)
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
-            .tint(.pink)
-            .disabled(model.isExporting)
-
-            if let message = model.errorMessage {
-                Text(message).font(.caption).foregroundStyle(.orange)
-            }
-        }
-        .padding(.top, 6)
-    }
-
-    private func exportLabel(_ preset: ExportPreset) -> String {
-        switch preset {
-        case .uhd:    return "Video — 4K"
-        case .fullHD: return "Video — 1080p"
-        case .hd:     return "Video — 720p"
-        case .gif:    return "Animated GIF"
+        ExportControls(
+            isExporting: model.isExporting,
+            progress: model.exportProgress,
+            canExport: model.duration > 0.01,
+            suggestedName: model.project.name,
+            errorMessage: model.errorMessage
+        ) { format, preset, url in
+            Task { await model.export(format: format, preset: preset, to: url) }
         }
     }
 

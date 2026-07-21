@@ -7,15 +7,18 @@ import AppKit
 struct EditorView: View {
     @Bindable var model: ProjectEditorModel
 
+    /// Shares its visibility with the multi-clip editor, so the panel behaves like one
+    /// app-wide inspector rather than a per-screen one.
+    @AppStorage("inspectorVisible") private var showInspector = true
+
     var body: some View {
-        HStack(spacing: 0) {
-            previewColumn
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            InspectorView(model: model)
-                .frame(width: 320)
-        }
-        .onChange(of: model.settings) { _, _ in model.settingsChanged() }
+        previewColumn
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .inspector(isPresented: $showInspector) {
+                InspectorView(model: model)
+                    .inspectorColumnWidth(min: 240, ideal: 320, max: 460)
+            }
+            .onChange(of: model.settings) { _, _ in model.settingsChanged() }
     }
 
     private var previewColumn: some View {
@@ -32,7 +35,10 @@ struct EditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(20)
 
-            TransportBar(model: model)
+            ScrollView(.horizontal, showsIndicators: false) {
+                TransportBar(model: model, showInspector: $showInspector)
+            }
+            .fixedSize(horizontal: false, vertical: true)
             ZoomTimeline(model: model)
                 .frame(height: 46)
         }
@@ -58,6 +64,7 @@ struct EditorView: View {
 
 private struct TransportBar: View {
     @Bindable var model: ProjectEditorModel
+    @Binding var showInspector: Bool
 
     var body: some View {
         HStack(spacing: 16) {
@@ -86,6 +93,13 @@ private struct TransportBar: View {
             Text(timecode(model.duration))
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(.secondary)
+
+            Button { showInspector.toggle() } label: {
+                Image(systemName: "sidebar.trailing")
+            }
+            .buttonStyle(.glass)
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help(showInspector ? "Hide inspector" : "Show inspector")
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
         .glassEffect(.regular, in: .capsule)

@@ -176,35 +176,33 @@ final class ProjectEditorModel {
 
     // MARK: Export
 
-    func export(preset: ExportPreset) async {
+    func export(format: ExportFormat, preset: ExportPreset, to outputURL: URL) async {
         guard !isExporting else { return }
         errorMessage = nil
         isExporting = true
         exportProgress = 0
 
-        // Scale the current canvas (aspect) to the preset's resolution.
+        // Scale the current canvas (aspect) to the chosen resolution.
         var exportSettings = settings
-        let size = preset.outputSize(canvasWidth: settings.outputWidth, canvasHeight: settings.outputHeight)
+        let size = format.isGIF
+            ? ExportPreset.gifSize(canvasWidth: settings.outputWidth, canvasHeight: settings.outputHeight)
+            : preset.outputSize(canvasWidth: settings.outputWidth, canvasHeight: settings.outputHeight)
         exportSettings.outputWidth = size.width
         exportSettings.outputHeight = size.height
-
-        let outputURL = project.packageURL
-            .appendingPathComponent("polished")
-            .appendingPathExtension(preset.fileExtension)
 
         do {
             let onProgress: @Sendable (Double) -> Void = { [weak self] p in
                 Task { @MainActor in self?.exportProgress = p }
             }
-            if preset.isGIF {
+            if format.isGIF {
                 try await VideoExporter.exportGIF(project: project, settings: exportSettings,
-                                                  frameRate: preset.gifFrameRate, to: outputURL, progress: onProgress)
+                                                  frameRate: format.gifFrameRate, to: outputURL, progress: onProgress)
             } else {
                 try await VideoExporter.export(project: project, settings: exportSettings,
-                                               to: outputURL, progress: onProgress)
+                                               format: format, to: outputURL, progress: onProgress)
             }
             lastExportURL = outputURL
-            NSWorkspace.shared.open(outputURL)
+            NSWorkspace.shared.activateFileViewerSelecting([outputURL])
         } catch {
             errorMessage = error.localizedDescription
         }
