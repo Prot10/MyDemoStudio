@@ -19,6 +19,7 @@ enum VideoExporter {
     static func export(
         project: DemoProject,
         settings: RenderSettings,
+        format: ExportFormat = .mp4,
         to outputURL: URL,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
@@ -41,13 +42,14 @@ enum VideoExporter {
             .appendingPathComponent("._videoonly_\(UUID().uuidString).mov")
 
         try await renderVideoOnly(
-            asset: built.asset, composition: composition, settings: settings, duration: built.duration,
-            to: videoOnlyURL, progress: { p in progress(p * (hasAudio ? 0.9 : 1.0)) }
+            asset: built.asset, composition: composition,
+            width: settings.outputWidth, height: settings.outputHeight, duration: built.duration,
+            format: format, to: videoOnlyURL, progress: { p in progress(p * (hasAudio ? 0.9 : 1.0)) }
         )
 
         // Mux the mixed audio track in (passthrough) if present.
         if let mixedAudioURL {
-            try await mux(videoOnly: videoOnlyURL, audioURL: mixedAudioURL, to: outputURL)
+            try await mux(videoOnly: videoOnlyURL, audioURL: mixedAudioURL, format: format, to: outputURL)
             try? FileManager.default.removeItem(at: videoOnlyURL)
             try? FileManager.default.removeItem(at: mixedAudioURL)
         } else {
@@ -57,12 +59,70 @@ enum VideoExporter {
         progress(1.0)
     }
 
+    /// Renders a multi-clip project. Same two-stage shape as `export`: composite the
+    /// picture, mix the audio, then mux — so both editors share one export path.
+    @concurrent
+    static func exportTimeline(
+        project: EditProject,
+        document: EditDocument,
+        size: (width: Int, height: Int)? = nil,
+        format: ExportFormat = .mp4,
+        to outputURL: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let built = try await TimelineCompositionBuilder.build(project: project, document: document)
+        let width = size?.width ?? document.canvas.width
+        let height = size?.height ?? document.canvas.height
+        if size != nil {
+            built.videoComposition.renderSize = CGSize(width: width, height: height)
+        }
+
+        let mixedAudioURL = try? await TimelineAudioMixer.build(project: project, document: document)
+        let hasAudio = mixedAudioURL != nil
+        let videoOnlyURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent("._videoonly_\(UUID().uuidString).\(format.fileExtension)")
+
+        try await renderVideoOnly(
+            asset: built.asset, composition: built.videoComposition,
+            width: width, height: height, duration: built.duration,
+            format: format, to: videoOnlyURL, progress: { p in progress(p * (hasAudio ? 0.9 : 1.0)) }
+        )
+
+        if let mixedAudioURL {
+            try await mux(videoOnly: videoOnlyURL, audioURL: mixedAudioURL, format: format, to: outputURL)
+            try? FileManager.default.removeItem(at: videoOnlyURL)
+            try? FileManager.default.removeItem(at: mixedAudioURL)
+        } else {
+            try? FileManager.default.removeItem(at: outputURL)
+            try FileManager.default.moveItem(at: videoOnlyURL, to: outputURL)
+        }
+        progress(1.0)
+    }
+
+    /// Renders a multi-clip project to an animated GIF.
+    @concurrent
+    static func exportTimelineGIF(
+        project: EditProject,
+        document: EditDocument,
+        frameRate: Int,
+        to outputURL: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let built = try await TimelineCompositionBuilder.build(project: project, document: document)
+        try await writeGIF(asset: built.asset, composition: built.videoComposition,
+                           duration: built.duration, frameRate: frameRate,
+                           width: document.canvas.width, height: document.canvas.height,
+                           to: outputURL, progress: progress)
+    }
+
     /// Renders the composited timeline to a video-only file.
     private static func renderVideoOnly(
         asset: AVAsset,
         composition: AVMutableVideoComposition,
-        settings: RenderSettings,
+        width: Int,
+        height: Int,
         duration: CMTime,
+        format: ExportFormat,
         to outputURL: URL,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
@@ -78,11 +138,11 @@ enum VideoExporter {
         reader.add(readerOutput)
 
         try? FileManager.default.removeItem(at: outputURL)
-        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: format.fileType)
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: settings.outputWidth,
-            AVVideoHeightKey: settings.outputHeight
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height
         ])
         writerInput.expectsMediaDataInRealTime = false
         guard writer.canAdd(writerInput) else { throw ExportError.writerFailed("cannot add input") }
@@ -115,7 +175,7 @@ enum VideoExporter {
     }
 
     /// Combines the video-only render with the master's audio track (passthrough).
-    private static func mux(videoOnly: URL, audioURL: URL, to outputURL: URL) async throws {
+    private static func mux(videoOnly: URL, audioURL: URL, format: ExportFormat, to outputURL: URL) async throws {
         let composition = AVMutableComposition()
         // Keep both assets alive for the whole function — a track whose asset deallocates
         // becomes invalid and insertTimeRange fails with -12780.
@@ -140,7 +200,7 @@ enum VideoExporter {
         guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
             throw ExportError.writerFailed("mux: no export session")
         }
-        try await session.export(to: outputURL, as: .mov)
+        try await session.export(to: outputURL, as: format.fileType)
     }
 
     /// Renders the project to an animated GIF by sampling the composited timeline with
@@ -160,12 +220,29 @@ enum VideoExporter {
         )
         let duration = built.duration
         let composition = CompositionBuilder.videoComposition(settings: settings, eventTrack: eventTrack, built: built, captions: project.readCaptions())
+        try await writeGIF(asset: built.asset, composition: composition, duration: duration,
+                           frameRate: frameRate, width: settings.outputWidth, height: settings.outputHeight,
+                           to: outputURL, progress: progress)
+    }
 
-        let generator = AVAssetImageGenerator(asset: built.asset)
+    /// Samples a composited timeline with an image generator (which drives the same
+    /// `DemoCompositor`) and encodes the frames as an animated GIF.
+    @concurrent
+    private static func writeGIF(
+        asset: AVAsset,
+        composition: AVMutableVideoComposition,
+        duration: CMTime,
+        frameRate: Int,
+        width: Int,
+        height: Int,
+        to outputURL: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let generator = AVAssetImageGenerator(asset: asset)
         generator.videoComposition = composition
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        generator.maximumSize = CGSize(width: settings.outputWidth, height: settings.outputHeight)
+        generator.maximumSize = CGSize(width: width, height: height)
 
         let totalSeconds = max(CMTimeGetSeconds(duration), 0.1)
         let frameCount = max(1, Int(totalSeconds * Double(frameRate)))
