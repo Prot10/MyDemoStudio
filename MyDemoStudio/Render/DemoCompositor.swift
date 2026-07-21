@@ -19,7 +19,7 @@ struct ZoomState: Sendable {
 
 /// Uniform buffer shared with `Shaders.metal`. Field order and float4 packing must
 /// match `GPUUniforms` there exactly.
-private struct GPUUniforms {
+struct GPUUniforms {
     var outputSize_corner: SIMD4<Float>
     var contentRect: SIMD4<Float>
     var zoom: SIMD4<Float>
@@ -29,9 +29,10 @@ private struct GPUUniforms {
     var shadow: SIMD4<Float>
     var cursor: SIMD4<Float>
     var cursorColor: SIMD4<Float>
-    var camera: SIMD4<Float>       // x,y (output px), z=radius, w=enabled
-    var cameraParams: SIMD4<Float> // x=aspect(w/h), y,z,w unused
+    var camera: SIMD4<Float>       // x,y (output px), z=radius, w=opacity (0 = no overlay)
+    var cameraParams: SIMD4<Float> // x=aspect(w/h), y=circular(1)/rounded-rect(0), z,w unused
     var caption: SIMD4<Float>      // x,y (top-left px), z=w, w=h of the text texture
+    var extra: SIMD4<Float>        // x=fade, y=overlay-layer alpha, z=main content enabled, w unused
 }
 
 /// Per-composition data handed to the compositor via the video-composition instruction.
@@ -96,46 +97,62 @@ enum RenderLayout {
 /// single Metal pass (background, rounded-corner screen, soft shadow, cursor, zoom).
 final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
-    private let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
-    private let pipeline: MTLRenderPipelineState
-    private var textureCache: CVMetalTextureCache!
-    private struct CursorSprite {
+    let device: MTLDevice?
+    private var commandQueue: MTLCommandQueue?
+    private let pipeline: MTLRenderPipelineState?
+    private var textureCache: CVMetalTextureCache?
+    struct CursorSprite {
         let texture: MTLTexture
         let aspect: Float                 // width / height
         let hotspot: SIMD2<Float>         // fraction (0…1) of the sprite where the click lands
     }
-    private let arrowSprite: CursorSprite?
-    private let handSprite: CursorSprite?
+    let arrowSprite: CursorSprite?
+    let handSprite: CursorSprite?
     private let renderQueue = DispatchQueue(label: "com.andrea.mydemostudio.render")
     /// Rasterized caption textures, keyed by text (accessed only on renderQueue).
     private var captionCache: [String: (texture: MTLTexture, width: Int, height: Int)] = [:]
+    /// Still-image textures for image clips, keyed by file path (renderQueue only).
+    var imageCache: [String: MTLTexture] = [:]
+    /// Canvas-sized text-overlay layers, keyed by the active text set (renderQueue only).
+    var overlayCache: [String: MTLTexture] = [:]
 
+    /// False when Metal could not be set up; every frame request then fails cleanly.
+    var isUsable: Bool { device != nil && pipeline != nil && commandQueue != nil && textureCache != nil }
+
+    /// AVFoundation instantiates the compositor itself, so `init()` cannot fail. Rather
+    /// than trap — which would take the whole app down over a GPU hiccup — an unusable
+    /// compositor is left inert and finishes every request with an error, which
+    /// AVFoundation surfaces as a failed render instead of a crash.
     override init() {
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue(),
-              let library = device.makeDefaultLibrary(),
-              let vfn = library.makeFunction(name: "demo_vertex"),
-              let ffn = library.makeFunction(name: "demo_fragment") else {
-            fatalError("MyDemoStudio: Metal setup failed")
-        }
+        let device = MTLCreateSystemDefaultDevice()
         self.device = device
-        self.commandQueue = queue
+        self.commandQueue = device?.makeCommandQueue()
 
-        let desc = MTLRenderPipelineDescriptor()
-        desc.vertexFunction = vfn
-        desc.fragmentFunction = ffn
-        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        do {
-            self.pipeline = try device.makeRenderPipelineState(descriptor: desc)
-        } catch {
-            fatalError("MyDemoStudio: pipeline creation failed: \(error)")
+        if let device,
+           let queue = device.makeCommandQueue(),
+           let library = device.makeDefaultLibrary(),
+           let vfn = library.makeFunction(name: "demo_vertex"),
+           let ffn = library.makeFunction(name: "demo_fragment") {
+            self.commandQueue = queue
+            let desc = MTLRenderPipelineDescriptor()
+            desc.vertexFunction = vfn
+            desc.fragmentFunction = ffn
+            desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            self.pipeline = try? device.makeRenderPipelineState(descriptor: desc)
+            if self.pipeline == nil {
+                NSLog("MyDemoStudio: Metal pipeline creation failed; rendering disabled")
+            }
+        } else {
+            self.pipeline = nil
+            NSLog("MyDemoStudio: Metal setup failed; rendering disabled")
         }
 
-        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &textureCache)
+        if let device {
+            CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &textureCache)
+        }
 
-        self.arrowSprite = Self.loadCursorSprite(NSCursor.arrow, device: device)
-        self.handSprite = Self.loadCursorSprite(NSCursor.pointingHand, device: device)
+        self.arrowSprite = device.flatMap { Self.loadCursorSprite(NSCursor.arrow, device: $0) }
+        self.handSprite = device.flatMap { Self.loadCursorSprite(NSCursor.pointingHand, device: $0) }
 
         super.init()
     }
@@ -178,17 +195,27 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         renderQueue.async { [weak self] in
-            guard let self else { return }
-            guard let instruction = request.videoCompositionInstruction as? DemoInstruction,
-                  let sourcePB = request.sourceFrame(byTrackID: instruction.masterTrackID),
-                  let outputPB = request.renderContext.newPixelBuffer() else {
+            guard let self, self.isUsable, let outputPB = request.renderContext.newPixelBuffer() else {
                 request.finish(with: NSError(domain: "MyDemoStudio", code: -1))
                 return
             }
-
-            let cameraPB = instruction.cameraTrackID.flatMap { request.sourceFrame(byTrackID: $0) }
             let time = CMTimeGetSeconds(request.compositionTime)
-            self.render(source: sourcePB, camera: cameraPB, into: outputPB, time: time, instruction: instruction)
+
+            // Two instruction shapes share one compositor: the single-recording editor
+            // (`DemoInstruction`) and the multi-clip timeline (`TimelineInstruction`).
+            if let instruction = request.videoCompositionInstruction as? DemoInstruction {
+                guard let sourcePB = request.sourceFrame(byTrackID: instruction.masterTrackID) else {
+                    request.finish(with: NSError(domain: "MyDemoStudio", code: -1))
+                    return
+                }
+                let cameraPB = instruction.cameraTrackID.flatMap { request.sourceFrame(byTrackID: $0) }
+                self.render(source: sourcePB, camera: cameraPB, into: outputPB, time: time, instruction: instruction)
+            } else if let instruction = request.videoCompositionInstruction as? TimelineInstruction {
+                self.renderTimeline(request: request, instruction: instruction, into: outputPB, time: time)
+            } else {
+                request.finish(with: NSError(domain: "MyDemoStudio", code: -1))
+                return
+            }
             request.finish(withComposedVideoFrame: outputPB)
         }
     }
@@ -230,22 +257,31 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
         }
 
+        draw(uniforms: uniforms, source: sourceTexture, cursor: cursorTexture,
+             camera: cameraTexture, caption: captionTexture, overlay: nil, into: outputTexture)
+    }
+
+    /// Encodes the single fullscreen pass. Every texture slot must be bound even when
+    /// unused, so absent textures fall back to the source texture.
+    func draw(uniforms: GPUUniforms, source: MTLTexture, cursor: MTLTexture?,
+                      camera: MTLTexture?, caption: MTLTexture?, overlay: MTLTexture?,
+                      into output: MTLTexture) {
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = outputTexture
+        pass.colorAttachments[0].texture = output
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+        guard let pipeline, let commandBuffer = commandQueue?.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
         var u = uniforms
         encoder.setRenderPipelineState(pipeline)
-        encoder.setFragmentTexture(sourceTexture, index: 0)
-        // Bind slots 1 & 2 unconditionally (Metal requires them even when unused).
-        encoder.setFragmentTexture(cursorTexture ?? sourceTexture, index: 1)
-        encoder.setFragmentTexture(cameraTexture ?? sourceTexture, index: 2)
-        encoder.setFragmentTexture(captionTexture ?? sourceTexture, index: 3)
+        encoder.setFragmentTexture(source, index: 0)
+        encoder.setFragmentTexture(cursor ?? source, index: 1)
+        encoder.setFragmentTexture(camera ?? source, index: 2)
+        encoder.setFragmentTexture(caption ?? source, index: 3)
+        encoder.setFragmentTexture(overlay ?? source, index: 4)
         encoder.setFragmentBytes(&u, length: MemoryLayout<GPUUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
@@ -343,8 +379,9 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             cursor: cursorVec,
             cursorColor: SIMD4<Float>(1, 1, 1, 1),
             camera: cameraVec,
-            cameraParams: SIMD4<Float>(1.777, 0, 0, 0),
-            caption: SIMD4<Float>(0, 0, 0, 0)
+            cameraParams: SIMD4<Float>(1.777, 1, 0, 0),
+            caption: SIMD4<Float>(0, 0, 0, 0),
+            extra: SIMD4<Float>(1, 0, 1, 0)
         )
         return (uniforms, cursorTexture)
     }
@@ -357,7 +394,7 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     }
 
     /// Rasterizes caption text (white, wrapped) to a texture, cached by string.
-    private func makeCaptionTexture(text: String, maxWidth: Int, fontSize: CGFloat) -> (texture: MTLTexture, width: Int, height: Int)? {
+    func makeCaptionTexture(text: String, maxWidth: Int, fontSize: CGFloat) -> (texture: MTLTexture, width: Int, height: Int)? {
         if let cached = captionCache[text] { return cached }
 
         let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
@@ -393,7 +430,7 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
         descriptor.usage = [.shaderRead]
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        guard let texture = device?.makeTexture(descriptor: descriptor) else { return nil }
         texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
                         withBytes: &pixels, bytesPerRow: bytesPerRow)
 
@@ -402,7 +439,8 @@ final class DemoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return result
     }
 
-    private func makeTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+    func makeTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        guard let textureCache else { return nil }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         var cvTexture: CVMetalTexture?

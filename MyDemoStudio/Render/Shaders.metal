@@ -13,9 +13,10 @@ struct GPUUniforms {
     float4 shadow;             // x=radius(px), y=opacity, z=zoomBlur(uv frac), w unused
     float4 cursor;             // dot: x,y,radius,_  |  arrow: originX,originY,spriteW,spriteH (output px)
     float4 cursorColor;        // rgba (dot tint)
-    float4 camera;             // x,y (output px), z=radius, w=enabled
-    float4 cameraParams;       // x=aspect(w/h)
+    float4 camera;             // x,y (output px), z=radius, w=opacity (0 = no overlay)
+    float4 cameraParams;       // x=aspect(w/h), y=circular(1)/rounded-rect(0), z,w unused
     float4 caption;            // x,y (top-left, output px), z=w, w=h of the text texture
+    float4 extra;              // x=fade(0..1), y=overlayLayer enabled, z=main content enabled, w unused
 };
 
 struct VOut {
@@ -64,6 +65,7 @@ fragment float4 demo_fragment(VOut in [[stage_in]],
                               texture2d<float> cursorTex [[texture(1)]],
                               texture2d<float> cameraTex [[texture(2)]],
                               texture2d<float> captionTex [[texture(3)]],
+                              texture2d<float> overlayTex [[texture(4)]],
                               constant GPUUniforms &u [[buffer(0)]]) {
     constexpr sampler samp(address::clamp_to_edge, filter::linear);
 
@@ -84,48 +86,53 @@ fragment float4 demo_fragment(VOut in [[stage_in]],
         color = u.bgColor1.rgb;
     }
 
-    // --- Rounded-rect window geometry ---
-    float2 rectOrigin = u.contentRect.xy;
-    float2 rectSize = u.contentRect.zw;
-    float2 center = rectOrigin + rectSize * 0.5;
-    float2 halfExtent = rectSize * 0.5;
-    float radius = u.outputSize_corner.z;
-    float d = sdRoundedBox(p, center, halfExtent, radius);
+    // --- Main content --- skipped entirely for text-only clips and empty gaps, which
+    // have no picture at all and should show just the background.
+    if (u.extra.z > 0.5) {
+        // Rounded-rect window geometry.
+        float2 rectOrigin = u.contentRect.xy;
+        float2 rectSize = u.contentRect.zw;
+        float2 center = rectOrigin + rectSize * 0.5;
+        float2 halfExtent = rectSize * 0.5;
+        float radius = u.outputSize_corner.z;
+        float d = sdRoundedBox(p, center, halfExtent, radius);
 
-    // --- Drop shadow (outside the window) ---
-    float shadowRadius = max(u.shadow.x, 1.0);
-    float shadowAlpha = u.shadow.y * smoothstep(shadowRadius, 0.0, d) * step(0.0, d);
-    color = mix(color, float3(0.0), shadowAlpha);
+        // Drop shadow (outside the window).
+        float shadowRadius = max(u.shadow.x, 1.0);
+        float shadowAlpha = u.shadow.y * smoothstep(shadowRadius, 0.0, d) * step(0.0, d);
+        color = mix(color, float3(0.0), shadowAlpha);
 
-    // --- Screen content --- camera "looks at" focusUV (master uv of the cursor) and
-    // shows a 1/z-sized window around it, so the focus lands at the CENTER of the screen.
-    float2 focusUV = u.zoom.xy;              // master uv (0..1) of the focus point
-    float z = max(u.zoom.z, 0.0001);
-    float2 contentNorm = (p - rectOrigin) / rectSize;   // 0..1 across the padded screen rect
-    float2 srcUV = focusUV + (contentNorm - 0.5) / z;
+        // The camera "looks at" focusUV (source uv of the cursor, or of the Ken Burns
+        // focus) and shows a 1/z-sized window around it, so the focus lands at the
+        // CENTER of the screen.
+        float2 focusUV = u.zoom.xy;
+        float z = max(u.zoom.z, 0.0001);
+        float2 contentNorm = (p - rectOrigin) / rectSize;   // 0..1 across the padded rect
+        float2 srcUV = focusUV + (contentNorm - 0.5) / z;
 
-    // Antialiased coverage of the rounded window.
-    float aa = max(fwidth(d), 1e-4);
-    float windowAlpha = clamp(0.5 - d / aa, 0.0, 1.0);
+        // Antialiased coverage of the rounded window.
+        float aa = max(fwidth(d), 1e-4);
+        float windowAlpha = clamp(0.5 - d / aa, 0.0, 1.0);
 
-    if (windowAlpha > 0.0) {
-        float blur = u.shadow.z;
-        float3 screenColor;
-        if (blur > 0.001) {
-            // Radial zoom-blur: sample along the line toward the zoom focus, growing
-            // with distance from it — approximates motion blur during a zoom move.
-            float2 toFocus = srcUV - focusUV;
-            const int N = 6;
-            float3 acc = float3(0.0);
-            for (int i = 0; i < N; i++) {
-                float k = ((float(i) / float(N - 1)) - 0.5) * blur;
-                acc += source.sample(samp, clamp(srcUV - toFocus * k, 0.0, 1.0)).rgb;
+        if (windowAlpha > 0.0) {
+            float blur = u.shadow.z;
+            float3 screenColor;
+            if (blur > 0.001) {
+                // Radial zoom-blur: sample along the line toward the zoom focus, growing
+                // with distance from it — approximates motion blur during a zoom move.
+                float2 toFocus = srcUV - focusUV;
+                const int N = 6;
+                float3 acc = float3(0.0);
+                for (int i = 0; i < N; i++) {
+                    float k = ((float(i) / float(N - 1)) - 0.5) * blur;
+                    acc += source.sample(samp, clamp(srcUV - toFocus * k, 0.0, 1.0)).rgb;
+                }
+                screenColor = acc / float(N);
+            } else {
+                screenColor = source.sample(samp, clamp(srcUV, 0.0, 1.0)).rgb;
             }
-            screenColor = acc / float(N);
-        } else {
-            screenColor = source.sample(samp, clamp(srcUV, 0.0, 1.0)).rgb;
+            color = mix(color, screenColor, windowAlpha);
         }
-        color = mix(color, screenColor, windowAlpha);
     }
 
     // --- Cursor ---
@@ -167,25 +174,53 @@ fragment float4 demo_fragment(VOut in [[stage_in]],
         }
     }
 
-    // --- Webcam bubble ---
-    if (u.camera.w > 0.5) {
-        float2 d = p - u.camera.xy;
-        float dist = length(d);
+    // --- Video overlay (webcam bubble, or a rounded-rect picture-in-picture) ---
+    float overlayOpacity = u.camera.w;
+    if (overlayOpacity > 0.004) {
         float r = u.camera.z;
-        if (dist < r + 3.0) {
-            float2 uvc = (d / r) * 0.5 + 0.5;              // 0..1 across the circle's bbox
-            float asp = max(u.cameraParams.x, 0.01);
-            float2 cuv = uvc;
-            if (asp > 1.0) { cuv.x = (uvc.x - 0.5) / asp + 0.5; }  // center-crop wide camera to square
+        float asp = max(u.cameraParams.x, 0.01);
+        bool circular = u.cameraParams.y > 0.5;
+        float2 rel = p - u.camera.xy;
+
+        float coverage = 0.0;
+        float ring = 0.0;
+        float2 cuv;
+        if (circular) {
+            float dist = length(rel);
+            coverage = smoothstep(r, r - 1.5, dist);
+            ring = smoothstep(r + 2.5, r + 0.5, dist) * (1.0 - coverage);
+            float2 uvc = (rel / r) * 0.5 + 0.5;            // 0..1 across the circle's bbox
+            cuv = uvc;
+            // Center-crop the (usually wide) camera frame to the square bbox.
+            if (asp > 1.0) { cuv.x = (uvc.x - 0.5) / asp + 0.5; }
             else           { cuv.y = (uvc.y - 0.5) * asp + 0.5; }
             cuv.x = 1.0 - cuv.x;                           // mirror (selfie view)
+        } else {
+            // Rounded rect that preserves the source aspect: width 2r, height 2r/aspect.
+            float2 halfE = float2(r, r / asp);
+            float od = sdRoundedBox(p, u.camera.xy, halfE, min(halfE.x, halfE.y) * 0.14);
+            float oaa = max(fwidth(od), 1e-4);
+            coverage = clamp(0.5 - od / oaa, 0.0, 1.0);
+            cuv = (rel / halfE) * 0.5 + 0.5;
+        }
+
+        if (coverage > 0.0 || ring > 0.0) {
             float3 cam = cameraTex.sample(samp, clamp(cuv, 0.0, 1.0)).rgb;
-            float inside = smoothstep(r, r - 1.5, dist);
-            float ring = smoothstep(r + 2.5, r + 0.5, dist) * (1.0 - inside);
-            color = mix(color, float3(1.0), ring * 0.6);
-            color = mix(color, cam, inside);
+            color = mix(color, float3(1.0), ring * 0.6 * overlayOpacity);
+            color = mix(color, cam, coverage * overlayOpacity);
         }
     }
+
+    // --- Overlay layer --- all active text cards rasterized into one canvas-sized,
+    // premultiplied RGBA texture, so there is no per-overlay limit here. `extra.y` is
+    // the layer's alpha (0 = no layer), which is what fades text cards in and out.
+    if (u.extra.y > 0.004) {
+        float4 o = overlayTex.sample(samp, in.uv) * clamp(u.extra.y, 0.0, 1.0);
+        color = o.rgb + color * (1.0 - o.a);
+    }
+
+    // --- Fade to black (clip fade in / out) ---
+    color *= clamp(u.extra.x, 0.0, 1.0);
 
     return float4(color, 1.0);
 }
