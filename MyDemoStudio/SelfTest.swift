@@ -97,11 +97,18 @@ enum SelfTest {
         let z0 = planner.zoom(at: 0.5)
         ok = expect(abs(z0.scale - 1.0) < 0.01, "zoom idle at t=0.5 (scale \(fmt(z0.scale)))") && ok
 
-        // 2. During the first cluster's hold → fully zoomed, focused near (965,542).
+        // 2. During the first cluster's hold → fully zoomed, and the camera is looking at
+        //    the *cursor*, not at the click that triggered the zoom. That's the whole
+        //    point of the follow model: the pointer stays near the centre of the frame.
         let z5 = planner.zoom(at: 5.6)
         ok = expect(abs(z5.scale - 2.0) < 0.05, "zoom held at t=5.6 (scale \(fmt(z5.scale)))") && ok
-        ok = expect(abs(z5.focus.x - 965) < 25 && abs(z5.focus.y - 542) < 25,
-                    "zoom focus near click (\(fmt(z5.focus.x)),\(fmt(z5.focus.y)))") && ok
+        let cursorAt5_6 = CGPoint(x: 500 + 5.6 * 10, y: 400)      // the synthetic path above
+        let clickAt5 = CGPoint(x: 965, y: 542)
+        let toCursor = hypot(z5.focus.x - cursorAt5_6.x, z5.focus.y - cursorAt5_6.y)
+        let toClick = hypot(z5.focus.x - clickAt5.x, z5.focus.y - clickAt5.y)
+        ok = expect(toCursor < 80 && toCursor < toClick,
+                    "zoom focus follows the cursor (\(fmt(z5.focus.x)),\(fmt(z5.focus.y))): "
+                    + "\(fmt(toCursor))px from cursor vs \(fmt(toClick))px from click") && ok
 
         // 3. Two clicks 0.3s apart merged into one segment (not two separate zooms).
         let z53 = planner.zoom(at: 5.15)
@@ -271,14 +278,14 @@ enum SelfTest {
 
         // Export a GIF through the same compositor and confirm it's a multi-frame GIF.
         var gifSettings = settings
-        let gifSize = ExportPreset.gif.outputSize(canvasWidth: settings.outputWidth, canvasHeight: settings.outputHeight)
+        let gifSize = ExportPreset.gifSize(canvasWidth: settings.outputWidth, canvasHeight: settings.outputHeight)
         gifSettings.outputWidth = gifSize.width
         gifSettings.outputHeight = gifSize.height
         let gifURL = project.packageURL.appendingPathComponent("polished.gif")
         var gifOK = false
         do {
             try await VideoExporter.exportGIF(project: project, settings: gifSettings,
-                                              frameRate: ExportPreset.gif.gifFrameRate, to: gifURL) { _ in }
+                                              frameRate: ExportFormat.gif.gifFrameRate, to: gifURL) { _ in }
             let frames = gifFrameCount(gifURL)
             let bytes = fileSize(gifURL) ?? 0
             gifOK = frames > 5 && bytes > 5_000
@@ -429,7 +436,7 @@ enum SelfTest {
 }
 
 /// Minimal RGBA bitmap reader for empirical pixel checks.
-private struct RGBAImage {
+struct RGBAImage {
     let width: Int
     let height: Int
     let bytes: [UInt8]
@@ -451,7 +458,7 @@ private struct RGBAImage {
 
     struct Color { var r, g, b: Double; var max: Double { Swift.max(r, g, b) } }
 
-    private func pixel(_ x: Int, _ y: Int) -> Color {
+    func pixel(_ x: Int, _ y: Int) -> Color {
         let i = (y * width + x) * 4
         return Color(r: Double(bytes[i]) / 255, g: Double(bytes[i + 1]) / 255, b: Double(bytes[i + 2]) / 255)
     }
