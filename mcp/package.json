@@ -1,0 +1,12 @@
+{
+  "name": "mydemostudio-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for driving MyDemoStudio edit projects from Claude Code.",
+  "bin": { "mydemostudio-mcp": "./server.mjs" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "zod": "^3.25.76"
+  }
+}

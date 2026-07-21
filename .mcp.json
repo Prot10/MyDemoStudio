@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mydemostudio": {
+      "command": "/Applications/MyDemoStudio.app/Contents/MacOS/MyDemoStudio",
+      "args": ["--mcp"]
+    }
+  }
+}
