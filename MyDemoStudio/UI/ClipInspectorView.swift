@@ -18,7 +18,6 @@ struct ClipInspectorView: View {
                     projectSections
                 }
 
-                exportSection
             }
             .padding(20)
         }
@@ -283,18 +282,6 @@ struct ClipInspectorView: View {
     }
 
     // MARK: Export
-
-    private var exportSection: some View {
-        ExportControls(
-            isExporting: model.isExporting,
-            progress: model.exportProgress,
-            canExport: model.document.duration > 0.01,
-            suggestedName: model.suggestedExportName,
-            errorMessage: model.errorMessage
-        ) { format, preset, url in
-            Task { await model.export(format: format, preset: preset, to: url) }
-        }
-    }
 
     // MARK: Small helpers
 

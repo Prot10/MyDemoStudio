@@ -115,7 +115,6 @@ struct InspectorView: View {
                     labeledSlider("Smoothing", value: $model.settings.cursorSmoothing, in: 0...1, percent: true)
                 }
 
-                exportSection
             }
             .padding(20)
         }
@@ -191,18 +190,6 @@ struct InspectorView: View {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-
-    private var exportSection: some View {
-        ExportControls(
-            isExporting: model.isExporting,
-            progress: model.exportProgress,
-            canExport: model.duration > 0.01,
-            suggestedName: model.project.name,
-            errorMessage: model.errorMessage
-        ) { format, preset, url in
-            Task { await model.export(format: format, preset: preset, to: url) }
         }
     }
 

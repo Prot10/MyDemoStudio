@@ -2,19 +2,78 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// The export controls shared by both editors: pick a format and resolution, then choose
-/// where the file goes.
-///
-/// The format and resolution are remembered app-wide, and the save panel reopens in the
-/// last folder you exported to — so the common case is two clicks, while the destination
-/// is still always yours to choose.
-struct ExportControls: View {
+/// The floating controls in the top-right of the editor: export, and the inspector
+/// toggle. Both are actions you reach for occasionally, so they hover over the content
+/// instead of taking up permanent space in a panel.
+struct EditorFloatingActions: View {
+    @Binding var showInspector: Bool
     let isExporting: Bool
     let progress: Double
     let canExport: Bool
     let suggestedName: String
     let errorMessage: String?
-    /// Called with the chosen format, resolution and destination.
+    let onExport: (ExportFormat, ExportPreset, URL) -> Void
+
+    @State private var showExport = false
+
+    var body: some View {
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 2) {
+                Button {
+                    showExport = true
+                } label: {
+                    ZStack {
+                        // While a render runs the button becomes the progress readout, so
+                        // the popover doesn't have to stay open to watch it.
+                        if isExporting {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.circular)
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+                    .frame(width: 26, height: 20)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canExport)
+                .help(isExporting ? "Rendering… \(Int(progress * 100))%" : "Export this video")
+                .popover(isPresented: $showExport, arrowEdge: .bottom) {
+                    ExportPopover(isExporting: isExporting, progress: progress,
+                                  suggestedName: suggestedName, errorMessage: errorMessage) { format, preset, url in
+                        showExport = false
+                        onExport(format, preset, url)
+                    }
+                }
+
+                Divider().frame(height: 16).opacity(0.5)
+
+                Button {
+                    showInspector.toggle()
+                } label: {
+                    Image(systemName: showInspector ? "sidebar.trailing" : "sidebar.leading")
+                        .frame(width: 26, height: 20)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(showInspector ? "Hide inspector" : "Show inspector")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .padding(14)
+    }
+}
+
+/// Format, resolution, and where the file goes.
+private struct ExportPopover: View {
+    let isExporting: Bool
+    let progress: Double
+    let suggestedName: String
+    let errorMessage: String?
     let onExport: (ExportFormat, ExportPreset, URL) -> Void
 
     @AppStorage("exportFormat") private var formatRaw = ExportFormat.mp4.rawValue
@@ -24,27 +83,27 @@ struct ExportControls: View {
     private var preset: ExportPreset { ExportPreset(rawValue: presetRaw) ?? .fullHD }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("EXPORT")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Export")
+                .font(.headline)
 
-            Picker("Format", selection: $formatRaw) {
-                ForEach(ExportFormat.allCases) { Text($0.label).tag($0.rawValue) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Format").font(.caption).foregroundStyle(.secondary)
+                Picker("Format", selection: $formatRaw) {
+                    ForEach(ExportFormat.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                Text(format.detail).font(.caption2).foregroundStyle(.secondary)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(format.detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             if !format.isGIF {
-                Picker("Resolution", selection: $presetRaw) {
-                    ForEach(ExportPreset.allCases) { Text($0.label).tag($0.rawValue) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Resolution").font(.caption).foregroundStyle(.secondary)
+                    Picker("Resolution", selection: $presetRaw) {
+                        ForEach(ExportPreset.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
             }
 
             if isExporting {
@@ -58,21 +117,22 @@ struct ExportControls: View {
                     onExport(format, preset, url)
                 }
             } label: {
-                Label("Export…", systemImage: "square.and.arrow.up")
+                Label("Choose destination…", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 3)
             }
             .buttonStyle(.glassProminent)
             .controlSize(.large)
             .tint(.pink)
-            .disabled(isExporting || !canExport)
-            .help("Choose where to save the exported video")
+            .disabled(isExporting)
 
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.top, 6)
+        .padding(16)
+        .frame(width: 290)
     }
 }
 
@@ -88,7 +148,6 @@ enum ExportDestination {
         panel.nameFieldStringValue = "\(sanitized(name)).\(format.fileExtension)"
         panel.allowedContentTypes = [format.contentType]
         panel.canCreateDirectories = true
-        // Keep the extension in step if the user switches type in the panel.
         panel.isExtensionHidden = false
 
         if let path = UserDefaults.standard.string(forKey: lastFolderKey) {

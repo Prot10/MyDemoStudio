@@ -14,6 +14,18 @@ struct EditorView: View {
     var body: some View {
         previewColumn
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topTrailing) {
+                EditorFloatingActions(
+                    showInspector: $showInspector,
+                    isExporting: model.isExporting,
+                    progress: model.exportProgress,
+                    canExport: model.duration > 0.01,
+                    suggestedName: model.project.name,
+                    errorMessage: model.errorMessage
+                ) { format, preset, url in
+                    Task { await model.export(format: format, preset: preset, to: url) }
+                }
+            }
             .inspector(isPresented: $showInspector) {
                 InspectorView(model: model)
                     .inspectorColumnWidth(min: 240, ideal: 320, max: 460)
@@ -34,9 +46,10 @@ struct EditorView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(20)
+            .padding(.top, 28)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                TransportBar(model: model, showInspector: $showInspector)
+                TransportBar(model: model)
             }
             .fixedSize(horizontal: false, vertical: true)
             ZoomTimeline(model: model)
@@ -64,7 +77,6 @@ struct EditorView: View {
 
 private struct TransportBar: View {
     @Bindable var model: ProjectEditorModel
-    @Binding var showInspector: Bool
 
     var body: some View {
         HStack(spacing: 16) {
@@ -93,13 +105,6 @@ private struct TransportBar: View {
             Text(timecode(model.duration))
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(.secondary)
-
-            Button { showInspector.toggle() } label: {
-                Image(systemName: "sidebar.trailing")
-            }
-            .buttonStyle(.glass)
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .help(showInspector ? "Hide inspector" : "Show inspector")
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
         .glassEffect(.regular, in: .capsule)

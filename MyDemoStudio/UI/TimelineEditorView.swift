@@ -20,7 +20,7 @@ struct TimelineEditorView: View {
             // column below what these controls demand, which AppKit reports as an
             // unsatisfiable layout while the divider is being dragged.
             ScrollView(.horizontal, showsIndicators: false) {
-                TransportBar(model: model, clips: clips, showInspector: $showInspector)
+                TransportBar(model: model, clips: clips)
             }
             .fixedSize(horizontal: false, vertical: true)
             TimelineLanes(model: model)
@@ -28,6 +28,18 @@ struct TimelineEditorView: View {
         }
         .padding(16)
         .background(backdrop)
+        .overlay(alignment: .topTrailing) {
+            EditorFloatingActions(
+                showInspector: $showInspector,
+                isExporting: model.isExporting,
+                progress: model.exportProgress,
+                canExport: model.document.duration > 0.01,
+                suggestedName: model.suggestedExportName,
+                errorMessage: model.errorMessage
+            ) { format, preset, url in
+                Task { await model.export(format: format, preset: preset, to: url) }
+            }
+        }
         .inspector(isPresented: $showInspector) {
             ClipInspectorView(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 330, max: 460)
@@ -66,6 +78,7 @@ struct TimelineEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 34)
     }
 
     private var canvasAspect: CGFloat {
@@ -85,7 +98,6 @@ struct TimelineEditorView: View {
 private struct TransportBar: View {
     @Bindable var model: TimelineEditorModel
     let clips: [LibraryClip]
-    @Binding var showInspector: Bool
     @State private var showClipPicker = false
 
     var body: some View {
@@ -160,13 +172,6 @@ private struct TransportBar: View {
                 .labelsHidden()
                 .frame(width: 90)
                 .help("Timeline zoom")
-
-            Button { showInspector.toggle() } label: {
-                Image(systemName: "sidebar.trailing")
-            }
-            .buttonStyle(.glass)
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .help(showInspector ? "Hide inspector" : "Show inspector")
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
         .glassEffect(.regular, in: .capsule)
