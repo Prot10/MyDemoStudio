@@ -1,0 +1,23 @@
+{
+  "name": "mydemostudio-site",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Promo site for MyDemoStudio — the native macOS demo-video recorder",
+  "homepage": "https://prot10.github.io/MyDemoStudio/",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5310"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
+    "@vitejs/plugin-react": "^6.0.3",
+    "tailwindcss": "^4.3.2",
+    "vite": "^8.1.3"
+  }
+}

@@ -1,0 +1,263 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   Tokens.
+
+   Every colour here is lifted from the product itself: the two gradient stops
+   are the app's default wallpaper, and `record` is the dot in the app icon.
+   The page is dark because the product is a grading surface — you judge a
+   rendered frame against black, not against white.
+--------------------------------------------------------------------------- */
+@theme {
+  --font-sans: 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Archivo', 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-void: #08080d;
+  --color-pit: #0c0c13;
+  --color-panel: #12121b;
+  --color-raise: #191926;
+
+  --color-violet-glow: #6b4cdb;
+  --color-azure-glow: #3b9bf5;
+  --color-record: #ff4d6d;
+
+  --color-paper: #eceef6;
+  --color-muted: #8b8ca6;
+  --color-faint: #5d5e75;
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+--------------------------------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+  background: var(--color-void);
+}
+
+body {
+  @apply bg-void text-paper font-sans antialiased;
+  overflow-x: hidden;
+  font-synthesis-weight: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-azure-glow) 40%, transparent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-azure-glow);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Display type is set slightly expanded — the variable width axis is the one
+   deliberate typographic move on the page. */
+.display {
+  font-family: var(--font-display);
+  font-variation-settings: 'wdth' 112;
+  letter-spacing: -0.032em;
+  line-height: 0.96;
+}
+.display-tight {
+  font-family: var(--font-display);
+  font-variation-settings: 'wdth' 104;
+  letter-spacing: -0.02em;
+}
+
+/* Small technical furniture: timecodes, tool names, lane labels. */
+.tech {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   Surfaces
+--------------------------------------------------------------------------- */
+.hair {
+  border: 1px solid rgb(255 255 255 / 0.08);
+}
+.card {
+  @apply rounded-2xl bg-panel;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
+}
+.card-hover {
+  transition:
+    border-color 0.35s,
+    background 0.35s,
+    transform 0.35s;
+}
+.card-hover:hover {
+  border-color: rgb(255 255 255 / 0.16);
+  background: var(--color-raise);
+  transform: translateY(-2px);
+}
+
+/* The brand gradient, used only where the product itself would use it. */
+.brand-grad {
+  background-image: linear-gradient(115deg, var(--color-violet-glow), var(--color-azure-glow));
+}
+.brand-text {
+  background-image: linear-gradient(100deg, #a78bfa, #60a5fa 55%, #38bdf8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll reveal (driven by fx.js)
+--------------------------------------------------------------------------- */
+.rv {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 0.75s cubic-bezier(0.2, 0.6, 0.2, 1),
+    transform 0.75s cubic-bezier(0.2, 0.6, 0.2, 1);
+  transition-delay: var(--rv-d, 0ms);
+}
+.rv.rv-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Hero title: each line rises out of its own mask.
+--------------------------------------------------------------------------- */
+@keyframes line-up {
+  from {
+    opacity: 0;
+    transform: translateY(105%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.line-mask {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.09em;
+  margin-bottom: -0.09em;
+}
+.line-mask > span {
+  display: block;
+  animation: line-up 0.9s cubic-bezier(0.16, 0.8, 0.24, 1) both;
+  animation-delay: var(--ld, 0ms);
+}
+
+/* ---------------------------------------------------------------------------
+   Ambient: one slow drifting light behind the hero, nothing more.
+--------------------------------------------------------------------------- */
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(-4%, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4%, -3%, 0) scale(1.12);
+  }
+}
+.aurora {
+  animation: aurora 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* The record dot — the one thing on the page allowed to pulse. */
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-record) 55%, transparent);
+  }
+  50% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-record) 0%, transparent);
+  }
+}
+.rec-dot {
+  animation: rec-pulse 1.9s ease-in-out infinite;
+}
+
+/* Marquee for the format ticker. */
+@keyframes ticker {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker 42s linear infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Range inputs — the look controls. Styled as a hairline track with a small
+   solid handle, so they read as instrument controls rather than web widgets.
+--------------------------------------------------------------------------- */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1.25rem;
+  background: transparent;
+  cursor: ew-resize;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+}
+.slider::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  border-radius: 999px;
+  background: var(--color-paper);
+  border: 0;
+  box-shadow: 0 0 0 4px rgb(59 155 245 / 0);
+  transition: box-shadow 0.2s;
+}
+.slider:hover::-webkit-slider-thumb,
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgb(59 155 245 / 0.28);
+}
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-paper);
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion — kill everything that moves on its own.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .rv {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .line-mask > span,
+  .aurora,
+  .rec-dot,
+  .ticker-track {
+    animation: none !important;
+  }
+}
