@@ -1,0 +1,69 @@
+name: Bug report
+description: Something does not work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, have a quick look at
+        [troubleshooting](https://github.com/Prot10/MyDemoStudio/blob/main/docs/troubleshooting.md) —
+        it covers permissions that will not stick, missing cursors and shader build failures.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Record a window
+        2. Open the project
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.5.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build configuration
+      options: [Debug, Release, "Not sure"]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where is it
+      options:
+        - Recording / permissions
+        - Auto-zoom or cursor
+        - The look (background, framing, captions)
+        - Editor / timeline
+        - Export
+        - MCP server or CLI
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: selftest
+    attributes:
+      label: Self-test output
+      description: >
+        If the problem is in the render pipeline, paste the output of the relevant run —
+        `MDS_SELFTEST=algo` for zoom maths, `MDS_SELFTEST=timeline` for multi-clip render.
+      render: shell

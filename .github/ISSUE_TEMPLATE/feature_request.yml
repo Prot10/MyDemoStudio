@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something MyDemoStudio should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/Prot10/MyDemoStudio/blob/main/ROADMAP.md) first —
+        it lists what is already planned, and what has been deliberately ruled out.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: Describe the situation, not the solution. What is awkward today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Workarounds, or how another tool handles it.

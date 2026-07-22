@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/Prot10/MyDemoStudio/tree/main/docs
+    about: Recording, the look, the editor, exporting, agents, architecture
+  - name: Troubleshooting
+    url: https://github.com/Prot10/MyDemoStudio/blob/main/docs/troubleshooting.md
+    about: Permissions that will not stick, black frames, build failures
